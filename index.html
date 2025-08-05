@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Flood and Landslide Map</title>
+  <title>Flood Map (Search Enabled)</title>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
@@ -14,23 +14,44 @@
 
   <style>
     #map { height: 100vh; }
+    .search-container {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 1000;
+      background: white;
+      padding: 10px;
+      border-radius: 5px;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+    }
+
+    #searchInput {
+      width: 250px;
+      padding: 5px;
+      font-size: 14px;
+    }
   </style>
 </head>
 <body>
 
 <div id="map"></div>
+<div class="search-container">
+  <input list="searchOptions" id="searchInput" placeholder="🔍 Search Barangay..." />
+  <datalist id="searchOptions"></datalist>
+</div>
 
 <script>
-  const map = L.map('map').setView([14.6091, 121.0223], 11); // NCR
+  const map = L.map('map').setView([14.6091, 121.0223], 11);
 
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '© OpenStreetMap contributors'
   }).addTo(map);
 
   const csvUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTQeZi2WL6t4Dr8w1v5BT3cR1LjW229lqZVyN0DVBBny1bFYQzjHlR0lSOpxG0OrQ/pub?gid=2090111762&single=true&output=csv";
+  const geojsonUrl = "NCR_test.geojson";
 
-  function normalize(val) {
-    return (val || "").toString().trim().replace(/\s+/g, ' ').toUpperCase();
+  function normalize(str) {
+    return (str || "").toString().trim().toUpperCase().replace(/\s+/g, " ");
   }
 
   function cleanHeaders(row) {
@@ -42,36 +63,37 @@
     return cleaned;
   }
 
+  function getFloodColor(data) {
+    if (!data) return "gray";
+    const vhf = normalize(data["V. HIGH FLOODING"]);
+    const hf  = normalize(data["HIGH FLOODING"]);
+    const mf  = normalize(data["MOD. FLOODING"]);
+
+    if (vhf === "VHF") return "red";
+    if (hf  === "HF")  return "orange";
+    if (mf  === "MF")  return "yellow";
+    return "lightgray";
+  }
+
+  const labelToKeyMap = {};
+  const featureMap = {};
+
   Promise.all([
-    fetch('NCR_test.geojson').then(res => res.json()),
-    fetch(csvUrl).then(res => res.text()).then(csvText => Papa.parse(csvText, { header: true }).data)
-  ]).then(([geojsonData, rawSheetData]) => {
+    fetch(geojsonUrl).then(res => res.json()),
+    fetch(csvUrl).then(res => res.text()).then(text => Papa.parse(text, { header: true }).data)
+  ]).then(([geojsonData, rawCsvData]) => {
+    const csvLookup = {};
 
-    const sheetLookup = {};
-    const sheetKeys = new Set();
-
-    rawSheetData.forEach(row => {
+    rawCsvData.forEach(row => {
       const cleaned = cleanHeaders(row);
-      const key = `${normalize(cleaned["PROV_CSV"])}|${normalize(cleaned["MUNICITY"])}|${normalize(cleaned["BARANGAY"])}`;
-      sheetLookup[key] = cleaned;
-      sheetKeys.add(key);
+      const prov = normalize(cleaned["PROVINCE"]);
+      const muni = normalize(cleaned["MUNICIPALITY"]);
+      const brgy = normalize(cleaned["BARANGAY"]);
+      const key = `${prov}|${muni}|${brgy}`;
+      csvLookup[key] = cleaned;
     });
 
-    console.log("🔍 Sample keys from sheet:", Array.from(sheetKeys).slice(0, 5));
-
-    function getFloodColor(data) {
-      if (!data) return "gray";
-      const vhf = normalize(data["V. HIGH FLOODING"]);
-      const hf = normalize(data["HIGH FLOODING"]);
-      const mf = normalize(data["MOD. FLOODING"]);
-
-      if (vhf === "VHF") return "red";
-      if (hf === "HF")  return "orange";
-      if (mf === "MF")  return "yellow";
-      return "gray";
-    }
-
-    let unmatched = [];
+    console.log("✅ CSV Keys loaded:", Object.keys(csvLookup).length);
 
     L.geoJSON(geojsonData, {
       style: function (feature) {
@@ -79,9 +101,22 @@
         const muni = normalize(feature.properties.MuniCityNa);
         const brgy = normalize(feature.properties.BrgyName);
         const key = `${prov}|${muni}|${brgy}`;
-        const data = sheetLookup[key];
+        const data = csvLookup[key];
 
-        if (!data) unmatched.push(key);
+        const label = `${feature.properties.BrgyName}, ${feature.properties.MuniCityNa}, ${feature.properties.ProvName}`;
+        if (!labelToKeyMap[label]) {
+          const option = document.createElement("option");
+          option.value = label;
+          option.dataset.key = key;
+          document.getElementById("searchOptions").appendChild(option);
+          labelToKeyMap[label] = key;
+        }
+
+        if (!data) {
+          console.warn("❌ No match for key:", key, feature.properties);
+        } else {
+          console.log("✅ Match found:", key);
+        }
 
         return {
           color: "black",
@@ -95,32 +130,39 @@
         const muni = normalize(feature.properties.MuniCityNa);
         const brgy = normalize(feature.properties.BrgyName);
         const key = `${prov}|${muni}|${brgy}`;
-        const data = sheetLookup[key];
+        const data = csvLookup[key];
 
-        let popupContent = `<strong>${brgy}, ${muni}, ${prov}</strong><br>`;
+        let popup = `<strong>${feature.properties.BrgyName}</strong><br>`;
+        popup += `<small>${feature.properties.MuniCityNa}, ${feature.properties.ProvName}</small><br><br>`;
 
         if (data) {
-          for (let key in data) {
-            if (!["PROV_CSV", "MUNICITY", "BARANGAY"].includes(key)) {
-              popupContent += `${key}: ${data[key]}<br>`;
-            }
-          }
+          popup += `<strong>Flood Info:</strong><br>`;
+          popup += `V. HIGH FLOODING: ${data["V. HIGH FLOODING"] || "-"}<br>`;
+          popup += `HIGH FLOODING: ${data["HIGH FLOODING"] || "-"}<br>`;
+          popup += `MOD. FLOODING: ${data["MOD. FLOODING"] || "-"}<br>`;
         } else {
-          popupContent += "<span style='color:red;'>No matching data from sheet</span>";
+          popup += "❌ No matching data found.";
         }
 
-        layer.bindPopup(popupContent);
+        layer.bindPopup(popup);
+
+        const label = `${feature.properties.BrgyName}, ${feature.properties.MuniCityNa}, ${feature.properties.ProvName}`;
+        featureMap[labelToKeyMap[label]] = { feature, layer };
       }
     }).addTo(map);
+  });
 
-    setTimeout(() => {
-      if (unmatched.length > 0) {
-        console.warn("❌ Unmatched GeoJSON keys:", unmatched.slice(0, 20));
-        console.log(`Total unmatched: ${unmatched.length}`);
-      } else {
-        console.log("✅ All features matched successfully!");
-      }
-    }, 1000);
+  document.getElementById("searchInput").addEventListener("change", function () {
+    const label = this.value;
+    const key = labelToKeyMap[label];
+    if (!key) return;
+
+    const match = featureMap[key];
+    if (match && match.layer) {
+      const bounds = match.layer.getBounds();
+      map.fitBounds(bounds);
+      match.layer.openPopup();
+    }
   });
 </script>
 

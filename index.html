@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Flood Map</title>
+  <title>Flood and Landslide Map</title>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
@@ -21,7 +21,7 @@
 <div id="map"></div>
 
 <script>
-  const map = L.map('map').setView([14.6091, 121.0223], 11); // NCR center
+  const map = L.map('map').setView([14.6091, 121.0223], 11); // NCR
 
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '© OpenStreetMap contributors'
@@ -30,7 +30,7 @@
   const csvUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTQeZi2WL6t4Dr8w1v5BT3cR1LjW229lqZVyN0DVBBny1bFYQzjHlR0lSOpxG0OrQ/pub?gid=2090111762&single=true&output=csv";
 
   function normalize(val) {
-    return (val || "").toString().trim().toUpperCase();
+    return (val || "").toString().trim().replace(/\s+/g, ' ').toUpperCase();
   }
 
   function cleanHeaders(row) {
@@ -47,13 +47,17 @@
     fetch(csvUrl).then(res => res.text()).then(csvText => Papa.parse(csvText, { header: true }).data)
   ]).then(([geojsonData, rawSheetData]) => {
 
-    // Normalize rows and headers
     const sheetLookup = {};
+    const sheetKeys = new Set();
+
     rawSheetData.forEach(row => {
       const cleaned = cleanHeaders(row);
-      const name = normalize(cleaned["BARANGAY"]);
-      sheetLookup[name] = cleaned;
+      const key = `${normalize(cleaned["PROV_CSV"])}|${normalize(cleaned["MUNICITY"])}|${normalize(cleaned["BARANGAY"])}`;
+      sheetLookup[key] = cleaned;
+      sheetKeys.add(key);
     });
+
+    console.log("🔍 Sample keys from sheet:", Array.from(sheetKeys).slice(0, 5));
 
     function getFloodColor(data) {
       if (!data) return "gray";
@@ -67,10 +71,18 @@
       return "gray";
     }
 
+    let unmatched = [];
+
     L.geoJSON(geojsonData, {
       style: function (feature) {
-        const name = normalize(feature.properties.bgyname);
-        const data = sheetLookup[name];
+        const prov = normalize(feature.properties.ProvName);
+        const muni = normalize(feature.properties.MuniCityNa);
+        const brgy = normalize(feature.properties.BrgyName);
+        const key = `${prov}|${muni}|${brgy}`;
+        const data = sheetLookup[key];
+
+        if (!data) unmatched.push(key);
+
         return {
           color: "black",
           weight: 1,
@@ -79,23 +91,36 @@
         };
       },
       onEachFeature: function (feature, layer) {
-        const name = normalize(feature.properties.bgyname);
-        const data = sheetLookup[name];
-        let popupContent = `<strong>${feature.properties.bgyname}</strong><br>`;
+        const prov = normalize(feature.properties.ProvName);
+        const muni = normalize(feature.properties.MuniCityNa);
+        const brgy = normalize(feature.properties.BrgyName);
+        const key = `${prov}|${muni}|${brgy}`;
+        const data = sheetLookup[key];
+
+        let popupContent = `<strong>${brgy}, ${muni}, ${prov}</strong><br>`;
 
         if (data) {
           for (let key in data) {
-            if (key !== "BARANGAY") {
+            if (!["PROV_CSV", "MUNICITY", "BARANGAY"].includes(key)) {
               popupContent += `${key}: ${data[key]}<br>`;
             }
           }
         } else {
-          popupContent += "No data from sheet.";
+          popupContent += "<span style='color:red;'>No matching data from sheet</span>";
         }
 
         layer.bindPopup(popupContent);
       }
     }).addTo(map);
+
+    setTimeout(() => {
+      if (unmatched.length > 0) {
+        console.warn("❌ Unmatched GeoJSON keys:", unmatched.slice(0, 20));
+        console.log(`Total unmatched: ${unmatched.length}`);
+      } else {
+        console.log("✅ All features matched successfully!");
+      }
+    }, 1000);
   });
 </script>
 

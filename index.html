@@ -34,11 +34,18 @@
 </head>
 <body>
 
-<div id="map"></div>
 <div class="search-container">
   <input list="searchOptions" id="searchInput" placeholder="🔍 Search Barangay..." />
   <datalist id="searchOptions"></datalist>
+  <div style="margin-top:10px;">
+    <label>
+      <input type="checkbox" id="toggleGeojson" checked />
+      Show Flood Layer
+    </label>
+  </div>
 </div>
+
+<div id="map"></div>
 
 <script>
   const map = L.map('map').setView([14.6091, 121.0223], 11);
@@ -95,7 +102,7 @@
 
     console.log("✅ CSV Keys loaded:", Object.keys(csvLookup).length);
 
-    L.geoJSON(geojsonData, {
+    const geojsonLayer = L.geoJSON(geojsonData, {
       style: function (feature) {
         const prov = normalize(feature.properties.ProvName);
         const muni = normalize(feature.properties.MuniCityNa);
@@ -150,8 +157,18 @@
         featureMap[labelToKeyMap[label]] = { feature, layer };
       }
     }).addTo(map);
+
+    // ✅ Toggle functionality
+    document.getElementById("toggleGeojson").addEventListener("change", function () {
+      if (this.checked) {
+        geojsonLayer.addTo(map);
+      } else {
+        map.removeLayer(geojsonLayer);
+      }
+    });
   });
 
+  // ✅ Search feature
   document.getElementById("searchInput").addEventListener("change", function () {
     const label = this.value;
     const key = labelToKeyMap[label];
